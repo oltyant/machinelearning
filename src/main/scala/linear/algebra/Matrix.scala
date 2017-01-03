@@ -3,17 +3,22 @@ package linear.algebra
 import Numeric.Implicits._
 
 /**
-  * Created by oltyant on 2016. 12. 10..
+  * Created by oltyant on 2016. 12. 10.
   */
 package object matrix {
-  type Vect[A] = Vector[A]
-  type Matrix[A] = Vector[Vect[A]]
+  type Matrix[A] = Vector[Vector[A]]
 
   def identity[A: Numeric](n: Int): Matrix[A] = Matrix(n, n) {
     (i, j) => if (i == j) implicitly[Numeric[A]].one else implicitly[Numeric[A]].zero
   }
 
-  def product[A : Numeric](v1: Vect[A], v2: Vect[A]): A = (0 until v1.size).foldRight(implicitly[Numeric[A]].zero)((i, acc) => v1(i) * v2(i) + acc)
+  def product[A : Numeric](v1: Vector[A], v2: Vector[A]): A =
+    (0 until v1.size).foldRight(implicitly[Numeric[A]].zero)((i, acc) => v1(i) * v2(i) + acc)
+
+  def extract[A : Numeric](m: Matrix[A], rows: IndexedSeq[Int], cols: IndexedSeq[Int]): Matrix[A] =
+    Matrix(rows.size, cols.size) {
+      (i, j) => m(rows(i))(cols(j))
+    }
 
   def transpose[A : Numeric](m: Matrix[A]): Matrix[A] = {
     if (m.head.isEmpty) Matrix.empty
@@ -23,7 +28,7 @@ package object matrix {
   }
 
   def product[A : Numeric](m1: Matrix[A], m2: Matrix[A]): Matrix[A] = {
-    m1.map(row1 => transpose(m2).map(col2 => product(row1, col2)))
+    m1.map(row1 => m2.T.map(col2 => product(row1, col2)))
   }
 
   def det[A : Numeric](m: Matrix[A], n: Int): Option[A] = {
@@ -31,7 +36,7 @@ package object matrix {
     val zero = implicitly[Numeric[A]].zero
     val power = (x: A, y: Int) => (0 until y).foldLeft(one)((acc, a) => acc * x * x)
 
-    if (m.colCount != m.rowCount) None
+    if (!m.isSquare) None
     else if (n < 1) None
     else if (n == 1) Some(m(0)(0))
     else if (n == 2) Some(m(0)(0) * m(1)(1) - m(1)(0) * m(0)(1))
@@ -58,7 +63,7 @@ package object matrix {
   def cofact[A : Numeric](m: Matrix[A], n: Int): Option[Matrix[A]] = {
     val one  = implicitly[Numeric[A]].one
     val zero = implicitly[Numeric[A]].zero
-    val power = (x: A, y: Int) => (0 until y).foldLeft(one)((acc, a) => acc * x * x)
+    val power = (x: A, y: Int) => (0 until y).foldLeft(one)((acc, a) => acc * x)
 
     if (m.length != m.head.length) None
     else {
@@ -89,7 +94,8 @@ package object matrix {
     }
   }
 
-  def adjugant[A : Numeric](m: Matrix[A], n: Int): Option[Matrix[A]] = cofact(m, n).map(cofm => transpose[A](cofm))
+  def adjugant[A : Numeric](m: Matrix[A], n: Int): Option[Matrix[A]] =
+    cofact(m, n).map(cofm => transpose[A](cofm))
 
   implicit def m2RichMatrix[A : Numeric](m: Matrix[A]): RichMatrix[A] = RichMatrix(m)
   implicit def RichMatrix2m[A : Numeric](rm: RichMatrix[A]): Matrix[A] = rm.m
@@ -105,25 +111,36 @@ package object matrix {
     lazy val determinant = if (isSquare) det(this.m, rowCount) else None
     lazy val cofactor = if (isSquare) cofact(this.m, rowCount) else None
     lazy val adj = if (isSquare) adjugant(this.m, rowCount) else None
-    lazy val inv: Option[Matrix[Double]] = if (isSquare) adj.map(a => Matrix.scalar(determinant.map(d => 1.0 / d.toDouble()).getOrElse(0.0), a.map(_.map(_.toDouble)))) else None
+    lazy val inv: Option[Matrix[Double]] =
+      if (isSquare) adj.map(a => Matrix.scalar(determinant.map(d => 1.0 / d.toDouble()).getOrElse(0.0), a.map(_.map(_.toDouble))))
+      else None
 
-    def checkDims[B](that: RichMatrix[B]): Boolean = that.colCount == this.colCount && that.rowCount == this.rowCount
+    def isValidDims[B](that: RichMatrix[B]): Boolean =
+      that.colCount == this.colCount && that.rowCount == this.rowCount
 
-    def *(that: RichMatrix[A]): Option[Matrix[A]] = if (this.colCount != that.rowCount) None else Some(product(this.m, that.m))
+    def *(that: RichMatrix[A]): Option[Matrix[A]] =
+      if (this.colCount != that.rowCount) None else Some(product(this.m, that.m))
+
+    def *(scalar: A): Matrix[A] = Matrix.scalar(scalar, this)
 
     def +(that: RichMatrix[A]): Option[Matrix[A]] =
-      if (checkDims(that)) Some {
+      if (isValidDims(that)) Some {
         Matrix(this.rowCount, this.colCount)((i, j) => this.m(i)(j) + that.m(i)(j))
       } else None
 
+    def -(that: RichMatrix[A]): Option[Matrix[A]] =
+      if (isValidDims(that)) Some {
+        Matrix(this.rowCount, this.colCount)((i, j) => this.m(i)(j) - that.m(i)(j))
+      } else None
+
     override def equals(obj: scala.Any): Boolean = obj match {
-      case mm : RichMatrix[Double] if checkDims(mm) => Matrix(rowCount, colCount) {
+      case mm : RichMatrix[Double] if isValidDims(mm) => Matrix(rowCount, colCount) {
         (i, j) => Math.abs(m(i)(j).toDouble() - mm(i)(j))
       }.forall(_.foldLeft(true)(_ && _ < 0.0000001))
-      case mm : RichMatrix[Float] if checkDims(m) => Matrix(rowCount, colCount) {
+      case mm : RichMatrix[Float] if isValidDims(m) => Matrix(rowCount, colCount) {
         (i, j) => Math.abs(m(i)(j).toFloat() - mm(i)(j))
       }.forall(_.foldLeft(true)(_ && _ < 0.0000001f))
-      case mm : RichMatrix[A] if checkDims(m) => Matrix(rowCount, colCount) {
+      case mm : RichMatrix[A] if isValidDims(m) => Matrix(rowCount, colCount) {
         (i, j) => m(i)(j) - mm(i)(j)
       }.forall(_.foldLeft(true)(_ && _ == zero))
       case _ => false
@@ -136,12 +153,13 @@ package object matrix {
     def apply[A : Numeric](rowCount: Int, colCount: Int)(f: (Int, Int) => A): Matrix[A] =
       (0 until rowCount).map(i => (0 until colCount).map(j => f(i, j)).toVector).toVector
 
-    def apply[A : Numeric](rowCount: Int)(f: (Int) => Vect[A]): Matrix[A] =
+    def apply[A : Numeric](rowCount: Int)(f: (Int) => Vector[A]): Matrix[A] =
       (0 until rowCount).map(i => f(i)).toVector
 
-    def scalar[A : Numeric](a: A, m: Matrix[A]): Matrix[A] = Matrix.apply[A](m.rowCount, m.colCount)((i, j) => a * m(i)(j))
+    def scalar[A : Numeric](a: A, m: Matrix[A]): Matrix[A] =
+      Matrix.apply[A](m.rowCount, m.colCount)((i, j) => a * m(i)(j))
 
-    def empty[A : Numeric]: Matrix[A] = Vector.empty[Vect[A]]
+    def empty[A : Numeric]: Matrix[A] = Vector.empty[Vector[A]]
   }
 
 }
